@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    container_name: fastapi-employee-container
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////data/employees.db
+    volumes:
+      - employee-data:/data
+
+volumes:
+  employee-data:

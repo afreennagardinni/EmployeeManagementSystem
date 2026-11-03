@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Employee Management Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Employee Management Dashboard</h1>
+      <p class="sub" id="mode">Loading employees…</p>
+    </div>
+    <div class="actions">
+      <button class="btn icon" id="theme" aria-label="Toggle dark mode">🌙</button>
+      <button class="btn" id="export">Export CSV</button>
+      <button class="btn primary" id="add">+ Add employee <kbd>N</kbd></button>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+  <section class="raised panel"><h3>Headcount by department</h3><div class="bars" id="bars"></div></section>
+
+  <div class="toolbar">
+    <label class="search inset"><span aria-hidden="true">🔍</span>
+      <input id="q" type="search" placeholder="Search by name, email or role (press /)" aria-label="Search employees">
+    </label>
+    <select class="sel inset" id="dept" aria-label="Filter by department"></select>
+    <select class="sel inset" id="sfilter" aria-label="Filter by status"><option value="All">All statuses</option><option>Active</option><option>On leave</option><option>Resigned</option></select>
+    <select class="sel inset" id="sort" aria-label="Sort employees">
+      <option value="name">Name A–Z</option>
+      <option value="salary-desc">Salary: high to low</option>
+      <option value="salary-asc">Salary: low to high</option>
+      <option value="newest">Newest first</option>
+    </select>
+    <div class="seg inset" role="group" aria-label="View"><button id="vl" aria-pressed="true">List</button><button id="vg" aria-pressed="false">Grid</button></div>
+  </div>
+  <div class="raised bulk" id="bulk"><strong id="bn"></strong><button class="btn sm danger" id="bdel">Delete selected</button><button class="btn sm" id="bclr">Clear selection</button></div>
+
+  <main class="raised list" id="list" aria-live="polite"></main>
+  <div class="pager" id="pager"></div>
+</div>
+
+<dialog id="form">
+  <form class="card" id="f" novalidate>
+    <h2 id="ft">Add employee</h2>
+    <div class="field"><label for="name">Full name</label><input id="name" required><div class="err"></div></div>
+    <div class="field"><label for="email">Work email</label><input id="email" type="email" required><div class="err"></div></div>
+    <div class="two">
+      <div class="field"><label for="department">Department</label>
+        <select id="department"><option>Engineering</option><option>Design</option><option>Marketing</option><option>Sales</option><option>HR</option><option>Finance</option></select></div>
+      <div class="field"><label for="salary">Salary (₹)</label><input id="salary" type="number" min="0" step="1000" required><div class="err"></div></div>
+    </div>
+    <div class="two">
+      <div class="field"><label for="position">Job title</label><input id="position" required><div class="err"></div></div>
+      <div class="field"><label for="status">Status</label><select id="status"><option>Active</option><option>On leave</option><option>Resigned</option></select></div>
+    </div>
+    <div class="foot">
+      <button type="button" class="btn" id="cancel">Cancel</button>
+      <button class="btn primary" id="save">Save employee</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirm">
+  <div class="card">
+    <h2>Delete <span id="cname"></span>?</h2>
+    <p class="sub" style="margin-bottom:22px">This removes the employee permanently.</p>
+    <div class="foot">
+      <button class="btn" id="no">Keep employee</button>
+      <button class="btn danger" id="yes">Delete employee</button>
+    </div>
+  </div>
+</dialog>
+<div id="toasts"></div>
+<script src="/static/script.js"></script>
+</body>
+</html>
