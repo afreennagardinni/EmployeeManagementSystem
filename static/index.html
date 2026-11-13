@@ -1,333 +1,161 @@
-
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Employee Management System</title>
-
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#eaf4f2">
+  <title>Employee Management System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
-
 <body>
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
 
-<!-- ================= AUTHENTICATION ================= -->
+  <main id="auth-view" class="auth-shell">
+    <section class="auth-card glass-panel">
+      <div class="brand-mark">✦</div>
+      <p class="eyebrow">PEOPLE • PERFORMANCE • PROGRESS</p>
+      <h1>Employee Management</h1>
+      <p class="auth-subtitle">A smarter space to manage your team.</p>
 
-<section id="auth-view" class="auth-view">
-    <div class="auth-card">
+      <div class="auth-tabs">
+        <button id="show-login" class="tab-button active" type="button">Login</button>
+        <button id="show-register" class="tab-button" type="button">Create account</button>
+      </div>
 
-        <div class="brand">
-            <div class="brand-icon">E</div>
-            <h1>Employify</h1>
-            <p>Employee Management System</p>
+      <form id="login-form" class="auth-form">
+        <label>Email address</label>
+        <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email" required>
+        <label>Password</label>
+        <div class="password-wrap">
+          <input id="login-password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+          <button class="password-toggle" type="button" data-target="login-password">Show</button>
         </div>
+        <p id="login-error" class="form-message" role="alert"></p>
+        <button class="primary-button full-width" type="submit">Login <span>→</span></button>
+        <p class="auth-foot">New here? <button id="login-to-register" class="text-button" type="button">Create an account</button></p>
+      </form>
 
-        <!-- LOGIN -->
-
-        <div id="login-panel">
-            <h2>Welcome back!</h2>
-            <p class="sub">Login to manage your employees.</p>
-
-            <form id="login-form">
-                <div class="field">
-                    <label for="login-email">Email address</label>
-                    <input
-                        type="email"
-                        id="login-email"
-                        placeholder="you@example.com"
-                        required
-                    >
-                </div>
-
-                <div class="field">
-                    <label for="login-password">Password</label>
-                    <div class="password-box">
-                        <input
-                            type="password"
-                            id="login-password"
-                            placeholder="Enter your password"
-                            required
-                        >
-                        <button type="button" class="password-toggle" data-target="login-password">
-                            Show
-                        </button>
-                    </div>
-                </div>
-
-                <p id="login-error" class="auth-error"></p>
-
-                <button type="submit" class="btn primary auth-submit">
-                    Login
-                </button>
-            </form>
-
-            <p class="auth-switch">
-                Don't have an account?
-                <button type="button" id="show-register">Create account</button>
-            </p>
+      <form id="register-form" class="auth-form" hidden>
+        <label>Username</label>
+        <input id="register-username" type="text" placeholder="Choose a username" minlength="3" maxlength="50" autocomplete="username" required>
+        <label>Email address</label>
+        <input id="register-email" type="email" placeholder="you@example.com" autocomplete="email" required>
+        <label>Password</label>
+        <div class="password-wrap">
+          <input id="register-password" type="password" placeholder="At least 8 characters" minlength="8" autocomplete="new-password" required>
+          <button class="password-toggle" type="button" data-target="register-password">Show</button>
         </div>
-
-        <!-- REGISTER -->
-
-        <div id="register-panel" hidden>
-            <h2>Create your account</h2>
-            <p class="sub">Start managing your employees today.</p>
-
-            <form id="register-form">
-
-                <div class="field">
-                    <label for="register-username">Username</label>
-                    <input
-                        type="text"
-                        id="register-username"
-                        minlength="3"
-                        maxlength="50"
-                        placeholder="Your username"
-                        required
-                    >
-                </div>
-
-                <div class="field">
-                    <label for="register-email">Email address</label>
-                    <input
-                        type="email"
-                        id="register-email"
-                        placeholder="you@example.com"
-                        required
-                    >
-                </div>
-
-                <div class="field">
-                    <label for="register-password">Password</label>
-                    <div class="password-box">
-                        <input
-                            type="password"
-                            id="register-password"
-                            minlength="8"
-                            placeholder="Minimum 8 characters"
-                            required
-                        >
-                        <button type="button" class="password-toggle" data-target="register-password">
-                            Show
-                        </button>
-                    </div>
-                </div>
-
-                <p id="register-error" class="auth-error"></p>
-
-                <button type="submit" class="btn primary auth-submit">
-                    Create account
-                </button>
-            </form>
-
-            <p class="auth-switch">
-                Already have an account?
-                <button type="button" id="show-login">Login</button>
-            </p>
-        </div>
-
-        <p class="auth-footer">Secure Employee Management</p>
-
-    </div>
-</section>
-
-
-<!-- ================= MAIN APPLICATION ================= -->
-
-<div id="app-view" class="wrap" hidden>
-
-    <header>
-        <div>
-            <h1>Employee Management</h1>
-            <p class="sub" id="mode">Welcome to your dashboard</p>
-            <p class="sub" id="current-user"></p>
-        </div>
-
-        <div class="actions">
-            <button class="btn icon" id="theme" aria-label="Toggle dark mode">🌙</button>
-            <button class="btn" id="export">Export CSV</button>
-            <button class="btn primary" id="add">+ Add employee <kbd>N</kbd></button>
-            <button class="btn danger" id="logout">Logout</button>
-        </div>
-    </header>
-
-
-    <!-- DASHBOARD STATISTICS -->
-
-    <section class="stats" id="stats"></section>
-
-
-    <!-- DEPARTMENT CHART -->
-
-    <section class="raised panel">
-        <h3>Headcount by department</h3>
-        <div class="bars" id="bars"></div>
+        <p id="register-error" class="form-message" role="alert"></p>
+        <button class="primary-button full-width" type="submit">Create account <span>→</span></button>
+        <p class="auth-foot">Already registered? <button id="register-to-login" class="text-button" type="button">Login</button></p>
+      </form>
+      <p class="secure-note"><span>●</span> Your workspace is private to your account</p>
     </section>
 
-
-    <!-- SEARCH AND FILTERS -->
-
-    <div class="toolbar">
-
-        <label class="search inset">
-            <span aria-hidden="true">🔍</span>
-            <input
-                id="q"
-                type="search"
-                placeholder="Search by name, email or role"
-                aria-label="Search employees"
-            >
-        </label>
-
-        <select class="sel inset" id="dept" aria-label="Filter by department">
-        </select>
-
-        <select class="sel inset" id="sfilter" aria-label="Filter by status">
-            <option value="All">All statuses</option>
-            <option>Active</option>
-            <option>On leave</option>
-            <option>Resigned</option>
-        </select>
-
-        <select class="sel inset" id="sort" aria-label="Sort employees">
-            <option value="name">Name A–Z</option>
-            <option value="salary-desc">Salary: high to low</option>
-            <option value="salary-asc">Salary: low to high</option>
-            <option value="newest">Newest first</option>
-        </select>
-
-        <div class="seg inset" role="group" aria-label="View">
-            <button id="vl" aria-pressed="true">List</button>
-            <button id="vg" aria-pressed="false">Grid</button>
+    <aside class="auth-aside">
+      <div class="orb orb-one"></div><div class="orb orb-two"></div>
+      <div class="illustration-card glass-panel">
+        <div class="illustration-top"><span></span><span></span><span></span><b>TEAM OVERVIEW</b></div>
+        <div class="illustration-content">
+          <div class="person-avatar">A</div>
+          <div class="fake-lines"><i></i><i></i><i></i></div>
+          <div class="chart-bars"><i></i><i></i><i></i><i></i><i></i></div>
         </div>
+        <div class="check-circle">✓</div>
+      </div>
+      <h2>Work smart.<br><em>Grow together.</em></h2>
+      <p>Bring your people, projects and progress into one calm workspace.</p>
+      <div class="feature-pills"><span>✦ Simple</span><span>◈ Secure</span><span>↗ Insightful</span></div>
+    </aside>
+  </main>
 
-    </div>
+  <div id="app-view" class="app-shell" hidden>
+    <aside class="sidebar glass-panel">
+      <a class="side-brand" href="#"><span class="brand-mark small">✦</span><span>People<span class="brand-light">Desk</span></span></a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav class="side-nav">
+        <button class="nav-link active" data-page="dashboard"><span>▦</span> Overview</button>
+        <button class="nav-link" data-page="employees"><span>♙</span> Employees</button>
+        <button class="nav-link" data-page="departments"><span>▥</span> Departments</button>
+        <button class="nav-link" data-page="attendance"><span>◷</span> Attendance</button>
+        <button class="nav-link" data-page="payroll"><span>₹</span> Payroll</button>
+  <a class="nav-link" href="/static/reports.html"><span>▤</span> Reports</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="user-mini"><div class="user-avatar" id="user-avatar">U</div><div><strong id="sidebar-username">User</strong><small>Workspace owner</small></div></div>
+        <button id="logout-button" class="logout-button">↪ Sign out</button>
+      </div>
+    </aside>
 
+    <main class="main-content">
+      <header class="topbar">
+        <div><p class="eyebrow">YOUR WORKSPACE</p><h1 id="page-heading">Overview</h1></div>
+        <div class="top-actions"><span class="date-chip" id="today-label"></span><button id="theme-toggle" class="icon-button" title="Toggle theme">◐</button><div class="top-avatar" id="top-avatar">U</div></div>
+      </header>
 
-    <!-- BULK ACTIONS -->
-
-    <div class="raised bulk" id="bulk">
-        <strong id="bn"></strong>
-        <button class="btn sm danger" id="bdel">Delete selected</button>
-        <button class="btn sm" id="bclr">Clear selection</button>
-    </div>
-
-
-    <!-- EMPLOYEE LIST -->
-
-    <main class="raised list" id="list" aria-live="polite"></main>
-
-    <div class="pager" id="pager"></div>
-
-</div>
-
-
-<!-- ================= EMPLOYEE FORM ================= -->
-
-<dialog id="form">
-
-    <form class="card" id="f" novalidate>
-
-        <h2 id="ft">Add employee</h2>
-
-        <div class="field">
-            <label for="name">Full name</label>
-            <input id="name" required>
-            <div class="err"></div>
+      <section class="page-view" id="page-dashboard">
+        <div class="welcome-row"><div><h2>Good to see you, <span id="welcome-name">there</span> 👋</h2><p>Here’s what’s happening with your team today.</p></div><button class="primary-button" data-open-employee>＋ Add employee</button></div>
+        <div class="stat-grid">
+          <article class="stat-card"><div class="stat-icon mint">♙</div><div><small>Total employees</small><strong id="stat-employees">0</strong><span class="stat-note">In your workspace</span></div></article>
+          <article class="stat-card"><div class="stat-icon blue">▥</div><div><small>Departments</small><strong id="stat-departments">0</strong><span class="stat-note">Teams represented</span></div></article>
+          <article class="stat-card"><div class="stat-icon peach">₹</div><div><small>Average salary</small><strong id="stat-average">₹0</strong><span class="stat-note">Across your team</span></div></article>
+          <article class="stat-card"><div class="stat-icon violet">↗</div><div><small>Monthly payroll</small><strong id="stat-payroll">₹0</strong><span class="stat-note">Current salary total</span></div></article>
         </div>
-
-        <div class="field">
-            <label for="email">Work email</label>
-            <input id="email" type="email" required>
-            <div class="err"></div>
+        <div class="content-grid">
+          <article class="panel"><div class="panel-heading"><div><h3>Team distribution</h3><p>Employees by department</p></div><span class="panel-tag">LIVE</span></div><div id="department-chart" class="department-chart"></div></article>
+          <article class="panel"><div class="panel-heading"><div><h3>Recently added</h3><p>Your latest team members</p></div><button class="text-button" data-goto="employees">View all</button></div><div id="recent-list" class="recent-list"></div></article>
         </div>
+      </section>
 
-        <div class="two">
-
-            <div class="field">
-                <label for="department">Department</label>
-                <select id="department">
-                    <option>Engineering</option>
-                    <option>Design</option>
-                    <option>Marketing</option>
-                    <option>Sales</option>
-                    <option>HR</option>
-                    <option>Finance</option>
-                </select>
-            </div>
-
-            <div class="field">
-                <label for="salary">Salary (₹)</label>
-                <input id="salary" type="number" min="0" step="1000" required>
-                <div class="err"></div>
-            </div>
-
+      <section class="page-view" id="page-employees" hidden>
+        <div class="page-toolbar"><div><h2>All employees</h2><p>Manage your people and their information.</p></div><button class="primary-button" data-open-employee>＋ Add employee</button></div>
+        <div class="panel table-panel"><div class="table-tools"><input id="employee-search" type="search" placeholder="Search name, role or email…"><select id="department-filter"><option value="">All departments</option></select><select id="status-filter"><option value="">All statuses</option><option>Active</option><option>Inactive</option><option>On Leave</option></select></div>
+          <div class="table-scroll"><table><thead><tr><th>Employee</th><th>Role</th><th>Department</th><th>Salary</th><th>Status</th><th>Actions</th></tr></thead><tbody id="employee-table-body"></tbody></table></div>
+          <div id="employee-empty" class="empty-state" hidden>No employees found. Add your first employee to get started.</div>
         </div>
+      </section>
 
-        <div class="two">
+      <section class="page-view" id="page-departments" hidden>
+        <div class="page-toolbar"><div><h2>Departments</h2><p>See how your team is organised.</p></div></div>
+        <div id="department-cards" class="department-cards"></div>
+      </section>
 
-            <div class="field">
-                <label for="position">Job title</label>
-                <input id="position" required>
-                <div class="err"></div>
-            </div>
-
-            <div class="field">
-                <label for="status">Status</label>
-                <select id="status">
-                    <option>Active</option>
-                    <option>On leave</option>
-                    <option>Resigned</option>
-                </select>
-            </div>
-
+      <section class="page-view" id="page-attendance" hidden>
+        <div class="page-toolbar"><div><h2>Attendance</h2><p>Record and review employee attendance.</p></div></div>
+        <div class="panel attendance-panel">
+          <form id="attendance-form" class="inline-form"><select id="attendance-employee" required><option value="">Select employee</option></select><input id="attendance-date" type="date" required><select id="attendance-status"><option>Present</option><option>Absent</option><option>Late</option><option>On Leave</option></select><input id="attendance-note" placeholder="Optional note"><button class="primary-button" type="submit">Save record</button></form>
+          <div class="table-scroll"><table><thead><tr><th>Employee</th><th>Date</th><th>Status</th><th>Note</th></tr></thead><tbody id="attendance-body"></tbody></table></div>
         </div>
+      </section>
 
-        <div class="foot">
-            <button type="button" class="btn" id="cancel">Cancel</button>
-            <button type="submit" class="btn primary" id="save">
-                Save employee
-            </button>
-        </div>
+      <section class="page-view" id="page-payroll" hidden>
+        <div class="page-toolbar"><div><h2>Payroll overview</h2><p>Salary summary based on employee records.</p></div><button id="payroll-export" class="secondary-button">↓ Export CSV</button></div>
+        <div class="stat-grid"><article class="stat-card"><div class="stat-icon peach">₹</div><div><small>Total payroll</small><strong id="payroll-total">₹0</strong></div></article><article class="stat-card"><div class="stat-icon mint">↗</div><div><small>Average salary</small><strong id="payroll-average">₹0</strong></div></article><article class="stat-card"><div class="stat-icon blue">♙</div><div><small>Paid team members</small><strong id="payroll-count">0</strong></div></article></div>
+        <div class="panel"><h3>Salary by employee</h3><div class="table-scroll"><table><thead><tr><th>Employee</th><th>Department</th><th>Monthly salary</th></tr></thead><tbody id="payroll-body"></tbody></table></div></div>
+      </section>
 
+      <section class="page-view" id="page-reports" hidden>
+        <div class="page-toolbar"><div><h2>Reports & analytics</h2><p>A snapshot of your workforce and payroll.</p></div><button id="report-export" class="primary-button">↓ Download report</button></div>
+        <div class="stat-grid"><article class="stat-card"><div class="stat-icon mint">♙</div><div><small>Active employees</small><strong id="report-active">0</strong></div></article><article class="stat-card"><div class="stat-icon peach">◷</div><div><small>Inactive / other</small><strong id="report-inactive">0</strong></div></article><article class="stat-card"><div class="stat-icon violet">₹</div><div><small>Annualised payroll</small><strong id="report-annual">₹0</strong></div></article></div>
+        <div class="panel"><h3>Department payroll</h3><div id="report-departments" class="department-chart"></div></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="employee-dialog" class="employee-dialog">
+    <form id="employee-form" method="dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">TEAM DIRECTORY</p><h2 id="employee-dialog-title">Add employee</h2></div><button type="button" class="close-button" id="close-employee-dialog">×</button></div>
+      <input id="employee-id" type="hidden">
+      <label>Full name<input id="employee-name" required maxlength="120" placeholder="Employee name"></label>
+      <label>Email<input id="employee-email" type="email" placeholder="employee@example.com"></label>
+      <div class="form-two"><label>Role<input id="employee-role" required placeholder="e.g. Software Engineer"></label><label>Department<input id="employee-department" required placeholder="e.g. Engineering"></label></div>
+      <div class="form-two"><label>Monthly salary (₹)<input id="employee-salary" type="number" min="0" step="0.01" value="0"></label><label>Status<select id="employee-status"><option>Active</option><option>Inactive</option><option>On Leave</option></select></label></div>
+      <div class="dialog-actions"><button type="button" class="secondary-button" id="cancel-employee">Cancel</button><button class="primary-button" type="submit">Save employee</button></div>
     </form>
+  </dialog>
 
-</dialog>
-
-
-<!-- ================= DELETE CONFIRMATION ================= -->
-
-<dialog id="confirm">
-
-    <div class="card">
-
-        <h2>Delete <span id="cname"></span>?</h2>
-
-        <p class="sub" style="margin-bottom:22px">
-            This removes the employee permanently.
-        </p>
-
-        <div class="foot">
-            <button class="btn" id="no">Keep employee</button>
-            <button class="btn danger" id="yes">Delete employee</button>
-        </div>
-
-    </div>
-
-</dialog>
-
-
-<!-- NOTIFICATIONS -->
-
-<div id="toasts"></div>
-
-
-<!-- JAVASCRIPT -->
-
-<script src="/static/script.js"></script>
-
+  <script src="/static/script.js" defer></script>
 </body>
 </html>
