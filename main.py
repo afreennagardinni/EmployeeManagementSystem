@@ -1,585 +1,271 @@
-
 import os
 import hashlib
+import hmac
 import secrets
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from fastapi import (
-    FastAPI, HTTPException, Depends, Response, Cookie, Request
-)
+from fastapi import FastAPI, HTTPException, Depends, Request, Response, Cookie
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy import func, inspect, text
+from sqlalchemy.exc import IntegrityError
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from database import Base, engine, get_db
-from models import Employee as EmployeeModel, User as UserModel
-from schemas import EmployeeCreate, UserCreate, UserLogin
+from models import User, Employee, Attendance
+from schemas import UserCreate, UserLogin, EmployeeCreate, EmployeeUpdate, AttendanceCreate
 
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+SECRET_KEY = os.getenv("SECRET_KEY", "CHANGE_THIS_SECRET_KEY_BEFORE_DEPLOYING")
+serializer = URLSafeTimedSerializer(SECRET_KEY, salt="employee-management-session")
 
-# ==================================================
-# CONFIGURATION
-# ==================================================
-
-# Set a permanent SECRET_KEY in Render environment variables.
-# This development key is only for local testing.
-SECRET_KEY = os.getenv("SECRET_KEY", "local-development-key-change-this")
-
-serializer = URLSafeTimedSerializer(SECRET_KEY)
-
-app = FastAPI(title="Employee Management System")
-
-
-# ==================================================
-# DATABASE INITIALIZATION AND MIGRATION
-# ==================================================
+app = FastAPI(title="Employee Management System", version="2.0.0")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 Base.metadata.create_all(bind=engine)
 
-with engine.begin() as connection:
-    inspector = inspect(connection)
-
-    columns = {
-        column["name"]
-        for column in inspector.get_columns("employees")
-    }
-
-    # Add columns used by the dashboard if an older database lacks them.
-    migrations = {
-        "email": "VARCHAR NOT NULL DEFAULT ''",
+# Safe additive migration for an older SQLite employees table.
+def migrate_old_employees_table():
+    inspector = inspect(engine)
+    if "employees" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("employees")}
+    additions = {
+        "email": "VARCHAR(255) NOT NULL DEFAULT ''",
         "salary": "FLOAT NOT NULL DEFAULT 0",
-        "status": "VARCHAR NOT NULL DEFAULT 'Active'",
+        "status": "VARCHAR(30) NOT NULL DEFAULT 'Active'",
         "user_id": "INTEGER",
+        "created_at": "DATETIME",
     }
+    with engine.begin() as conn:
+        for name, definition in additions.items():
+            if name not in cols:
+                conn.execute(text(f"ALTER TABLE employees ADD COLUMN {name} {definition}"))
 
-    for column_name, definition in migrations.items():
-        if column_name not in columns:
-            connection.execute(
-                text(
-                    f"ALTER TABLE employees ADD COLUMN "
-                    f"{column_name} {definition}"
-                )
-            )
-
-
-# ==================================================
-# PASSWORD SECURITY
-# ==================================================
+migrate_old_employees_table()
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 310000)
+    return salt.hex() + "$" + digest.hex()
 
-    password_hash = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        600000
-    )
-
-    return salt.hex() + ":" + password_hash.hex()
-
-
-def verify_password(password: str, stored_password: str) -> bool:
+def verify_password(password: str, stored: str) -> bool:
     try:
-        salt_hex, hash_hex = stored_password.split(":")
-        salt = bytes.fromhex(salt_hex)
-
-        new_hash = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt,
-            600000
-        )
-
-        return secrets.compare_digest(
-            new_hash.hex(),
-            hash_hex
-        )
-
-    except (ValueError, TypeError):
+        salt_hex, digest_hex = stored.split("$", 1)
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), 310000)
+        return hmac.compare_digest(candidate.hex(), digest_hex)
+    except Exception:
         return False
 
-
-# ==================================================
-# AUTHENTICATION
-# ==================================================
-
-def get_current_user(
+def current_user(
+    request: Request,
     session_token: str | None = Cookie(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     if not session_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Please login first"
-        )
-
+        raise HTTPException(status_code=401, detail="Please log in.")
     try:
-        user_id = serializer.loads(
-            session_token,
-            max_age=86400
-        )
-
+        user_id = serializer.loads(session_token, max_age=86400)
     except (BadSignature, SignatureExpired):
-        raise HTTPException(
-            status_code=401,
-            detail="Session expired. Please login again."
-        )
-
-    user = db.query(UserModel).filter(
-        UserModel.id == user_id
-    ).first()
-
+        raise HTTPException(status_code=401, detail="Your session expired. Please log in again.")
+    user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="User not found"
-        )
-
+        raise HTTPException(status_code=401, detail="Account not found. Please log in again.")
     return user
 
-
-# ==================================================
-# SAMPLE EMPLOYEES
-# ==================================================
+def employee_dict(e: Employee):
+    return {
+        "id": e.id, "name": e.name, "role": e.role, "position": e.role,
+        "department": e.department, "email": e.email,
+        "salary": e.salary, "status": e.status,
+    }
 
 def add_sample_employees(db: Session, user_id: int):
     samples = [
-        {
-            "name": "Aisha Khan",
-            "email": "aisha@example.com",
-            "role": "Python Developer",
-            "department": "IT",
-            "salary": 45000,
-            "status": "Active"
-        },
-        {
-            "name": "Rahul Sharma",
-            "email": "rahul@example.com",
-            "role": "HR Manager",
-            "department": "HR",
-            "salary": 55000,
-            "status": "Active"
-        },
-        {
-            "name": "Sara Ahmed",
-            "email": "sara@example.com",
-            "role": "Data Analyst",
-            "department": "Analytics",
-            "salary": 40000,
-            "status": "Active"
-        },
-        {
-            "name": "Arjun Patel",
-            "email": "arjun@example.com",
-            "role": "UI Designer",
-            "department": "Design",
-            "salary": 38000,
-            "status": "Inactive"
-        }
+        ("Aarav Sharma", "Software Engineer", "Engineering", "aarav@example.com", 65000),
+        ("Priya Patel", "HR Executive", "Human Resources", "priya@example.com", 52000),
+        ("Rohan Mehta", "Sales Manager", "Sales", "rohan@example.com", 72000),
+        ("Sara Khan", "UI Designer", "Design", "sara@example.com", 60000),
     ]
-
-    for item in samples:
-        db.add(
-            EmployeeModel(
-                **item,
-                user_id=user_id
-            )
-        )
-
+    for name, role, dept, email, salary in samples:
+        db.add(Employee(name=name, role=role, department=dept, email=email, salary=salary, status="Active", user_id=user_id))
     db.commit()
 
+@app.get("/")
+def home():
+    return FileResponse(STATIC_DIR / "index.html")
 
-# ==================================================
-# FRONTEND
-# ==================================================
-
-app.mount(
-    "/static",
-    StaticFiles(directory=Path(__file__).parent / "static"),
-    name="static"
-)
-
-
-@app.get("/", include_in_schema=False)
-def serve_frontend():
-    return FileResponse(
-        Path(__file__).parent / "static" / "index.html"
-    )
-
-
-# ==================================================
-# REGISTER
-# ==================================================
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 @app.post("/register")
-def register(
-    data: UserCreate,
-    db: Session = Depends(get_db)
-):
-    existing = db.query(UserModel).filter(
-        (UserModel.email == data.email) |
-        (UserModel.username == data.username)
-    ).first()
-
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="Email or username already registered"
-        )
-
-    if len(data.password) < 8:
-        raise HTTPException(
-            status_code=400,
-            detail="Password must contain at least 8 characters"
-        )
-
-    user = UserModel(
-        username=data.username,
-        email=data.email,
-        password_hash=hash_password(data.password)
-    )
-
+def register(payload: UserCreate, response: Response, db: Session = Depends(get_db)):
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+    if db.query(User).filter(func.lower(User.email) == email).first():
+        raise HTTPException(status_code=409, detail="This email is already registered. Please log in.")
+    if db.query(User).filter(func.lower(User.username) == username.lower()).first():
+        raise HTTPException(status_code=409, detail="This username is already taken.")
+    user = User(username=username, email=email, password_hash=hash_password(payload.password))
     try:
         db.add(user)
+        db.flush()
+        samples = [
+            ("Aarav Sharma", "Software Engineer", "Engineering", "aarav@example.com", 65000),
+            ("Priya Patel", "HR Executive", "Human Resources", "priya@example.com", 52000),
+            ("Rohan Mehta", "Sales Manager", "Sales", "rohan@example.com", 72000),
+            ("Sara Khan", "UI Designer", "Design", "sara@example.com", 60000),
+        ]
+        for name, role, dept, sample_email, salary in samples:
+            db.add(Employee(name=name, role=role, department=dept, email=sample_email, salary=salary, status="Active", user_id=user.id))
         db.commit()
-        db.refresh(user)
-
-        add_sample_employees(db, user.id)
-
     except IntegrityError:
         db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Email or username already registered"
-        )
-
-    return {
-        "message": "Registration successful",
-        "username": user.username
-    }
-
-
-# ==================================================
-# LOGIN
-# ==================================================
+        raise HTTPException(status_code=409, detail="Could not create this account. Try another email or username.")
+    # Registration deliberately does NOT log the user in.
+    return {"message": "Account created successfully. Please log in."}
 
 @app.post("/login")
-def login(
-    data: UserLogin,
-    request: Request,
-    response: Response,
-    db: Session = Depends(get_db)
-):
-    user = db.query(UserModel).filter(
-        UserModel.email == data.email
-    ).first()
-
-    if not user or not verify_password(
-        data.password,
-        user.password_hash
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid email or password"
-        )
-
+def login(payload: UserLogin, request: Request, response: Response, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
     token = serializer.dumps(user.id)
-
     response.set_cookie(
-        key="session_token",
-        value=token,
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        max_age=86400,
-        path="/"
+        key="session_token", value=token, httponly=True, secure=request.url.scheme == "https",
+        samesite="lax", max_age=86400, path="/"
     )
-
-    return {
-        "message": "Login successful",
-        "username": user.username
-    }
-
-
-# ==================================================
-# LOGOUT
-# ==================================================
+    return {"message": "Login successful", "username": user.username, "email": user.email}
 
 @app.post("/logout")
-def logout(
-    request: Request,
-    response: Response
-):
-    response.delete_cookie(
-        key="session_token",
-        httponly=True,
-        secure=request.url.scheme == "https",
-        samesite="lax",
-        path="/"
-    )
-
-    return {
-        "message": "Logged out successfully"
-    }
-
-
-# ==================================================
-# CURRENT USER
-# ==================================================
+def logout(response: Response):
+    response.delete_cookie("session_token", path="/", httponly=True, samesite="lax")
+    return {"message": "Logged out"}
 
 @app.get("/me")
-def get_profile(
-    user=Depends(get_current_user)
-):
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email
-    }
-
-
-# ==================================================
-# DASHBOARD STATISTICS
-# ==================================================
+def me(user: User = Depends(current_user)):
+    return {"id": user.id, "username": user.username, "email": user.email}
 
 @app.get("/dashboard/stats")
-def dashboard_stats(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user)
-):
-    employees = db.query(EmployeeModel).filter(
-        EmployeeModel.user_id == user.id
-    ).all()
-
+def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Employee).filter(Employee.user_id == user.id)
+    employees = q.all()
+    total = len(employees)
+    active = sum(1 for e in employees if e.status.lower() == "active")
+    payroll = sum(float(e.salary or 0) for e in employees)
+    departments = len(set(e.department for e in employees))
     return {
-        "total_employees": len(employees),
-        "active_employees": sum(
-            e.status == "Active" for e in employees
-        ),
-        "inactive_employees": sum(
-            e.status == "Inactive" for e in employees
-        ),
-        "total_departments": len({
-            e.department for e in employees if e.department
-        })
+        "total_employees": total, "active_employees": active,
+        "departments": departments, "average_salary": round(payroll / total, 2) if total else 0,
+        "total_payroll": payroll,
+        "department_counts": [
+            {"department": d, "count": sum(1 for e in employees if e.department == d)}
+            for d in sorted(set(e.department for e in employees))
+        ],
+        "recent_employees": [employee_dict(e) for e in sorted(employees, key=lambda x: x.id, reverse=True)[:5]],
     }
-
-
-# ==================================================
-# READ EMPLOYEES
-# ==================================================
 
 @app.get("/employees")
-def get_employees(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-    search: str = ""
-):
-    query = db.query(EmployeeModel).filter(
-        EmployeeModel.user_id == user.id
-    )
-
+def list_employees(search: str = "", department: str = "", status: str = "",
+                   db: Session = Depends(get_db), user: User = Depends(current_user)):
+    q = db.query(Employee).filter(Employee.user_id == user.id)
     if search:
-        query = query.filter(
-            EmployeeModel.name.ilike(f"%{search}%")
-        )
-
-    employees = query.all()
-
-    return [
-        {
-            "id": emp.id,
-            "name": emp.name,
-            "email": emp.email,
-            "role": emp.role,
-            "position": emp.role,
-            "department": emp.department,
-            "salary": emp.salary,
-            "status": emp.status
-        }
-        for emp in employees
-    ]
-
-
-# ==================================================
-# CREATE EMPLOYEES
-# ==================================================
+        term = f"%{search.strip()}%"
+        q = q.filter((Employee.name.ilike(term)) | (Employee.email.ilike(term)) | (Employee.role.ilike(term)))
+    if department:
+        q = q.filter(Employee.department == department)
+    if status:
+        q = q.filter(Employee.status == status)
+    return [employee_dict(e) for e in q.order_by(Employee.id.desc()).all()]
 
 @app.post("/employees")
-def add_employees(
-    new_employees: list[EmployeeCreate] | EmployeeCreate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user)
-):
-    if isinstance(new_employees, EmployeeCreate):
-        new_employees = [new_employees]
-
-    added = []
-
-    try:
-        for item in new_employees:
-
-            # Employee IDs are currently globally unique because
-            # employees.id is the table's primary key.
-            if item.id is not None:
-                existing = db.query(EmployeeModel).filter(
-                    EmployeeModel.id == item.id
-                ).first()
-
-                if existing:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Employee ID {item.id} already exists"
-                    )
-
-            role = item.role or item.position
-
-            if not role:
-                raise HTTPException(
-                    status_code=422,
-                    detail="A role or position is required"
-                )
-
-            employee = EmployeeModel(
-                id=item.id,
-                name=item.name,
-                role=role,
-                department=item.department,
-                email=item.email,
-                salary=item.salary,
-                status=item.status,
-                user_id=user.id
-            )
-
-            db.add(employee)
-            added.append(employee)
-
-        db.commit()
-
-    except Exception:
-        db.rollback()
-        raise
-
-    return {
-        "message": "Employees added successfully",
-        "total_employees": len(added)
-    }
-
-
-# ==================================================
-# UPDATE EMPLOYEE
-# ==================================================
+def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    data = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    data.pop("position", None)
+    requested_id = data.pop("id", None)
+    if requested_id is not None and db.query(Employee).filter(Employee.id == requested_id).first():
+        raise HTTPException(status_code=409, detail="This employee ID is already in use. Leave ID blank to generate one.")
+    employee = Employee(**data, user_id=user.id)
+    if requested_id is not None:
+        employee.id = requested_id
+    db.add(employee)
+    db.commit()
+    db.refresh(employee)
+    return employee_dict(employee)
 
 @app.put("/employees/{employee_id}")
-def update_employee(
-    employee_id: int,
-    updated_employee: EmployeeCreate,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user)
-):
-    employee = db.query(EmployeeModel).filter(
-        EmployeeModel.id == employee_id,
-        EmployeeModel.user_id == user.id
-    ).first()
-
+def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    employee = db.query(Employee).filter(Employee.id == employee_id, Employee.user_id == user.id).first()
     if not employee:
-        raise HTTPException(
-            status_code=404,
-            detail="Employee not found"
-        )
-
-    if updated_employee.id is not None:
-        existing = db.query(EmployeeModel).filter(
-            EmployeeModel.id == updated_employee.id
-        ).first()
-
-        if existing and updated_employee.id != employee_id:
-            raise HTTPException(
-                status_code=400,
-                detail="This employee ID already exists"
-            )
-
-        employee.id = updated_employee.id
-
-    role = updated_employee.role or updated_employee.position
-
-    if not role:
-        raise HTTPException(
-            status_code=422,
-            detail="A role or position is required"
-        )
-
-    employee.name = updated_employee.name
-    employee.role = role
-    employee.department = updated_employee.department
-    employee.email = updated_employee.email
-    employee.salary = updated_employee.salary
-    employee.status = updated_employee.status
-
-    try:
-        db.commit()
-        db.refresh(employee)
-
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Could not update employee. Check the employee ID."
-        )
-
-    return {
-        "message": "Employee updated successfully"
-    }
-
-
-# ==================================================
-# DELETE EMPLOYEE
-# ==================================================
+        raise HTTPException(status_code=404, detail="Employee not found.")
+    data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
+    if "position" in data and "role" not in data:
+        data["role"] = data.pop("position")
+    else:
+        data.pop("position", None)
+    for key, value in data.items():
+        if value is not None:
+            setattr(employee, key, value)
+    db.commit()
+    db.refresh(employee)
+    return employee_dict(employee)
 
 @app.delete("/employees/{employee_id}")
-def delete_employee(
-    employee_id: int,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user)
-):
-    employee = db.query(EmployeeModel).filter(
-        EmployeeModel.id == employee_id,
-        EmployeeModel.user_id == user.id
-    ).first()
-
+def delete_employee(employee_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    employee = db.query(Employee).filter(Employee.id == employee_id, Employee.user_id == user.id).first()
     if not employee:
-        raise HTTPException(
-            status_code=404,
-            detail="Employee not found"
-        )
-
+        raise HTTPException(status_code=404, detail="Employee not found.")
     db.delete(employee)
     db.commit()
+    return {"message": "Employee deleted"}
 
+@app.get("/departments")
+def departments(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rows = db.query(Employee.department, func.count(Employee.id)).filter(Employee.user_id == user.id).group_by(Employee.department).all()
+    return [{"name": name, "count": count} for name, count in rows]
+
+@app.get("/attendance")
+def list_attendance(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    rows = db.query(Attendance, Employee.name).join(Employee, Attendance.employee_id == Employee.id).filter(Attendance.user_id == user.id).order_by(Attendance.work_date.desc()).limit(100).all()
+    return [{"id": a.id, "employee_id": a.employee_id, "employee": name, "date": a.work_date.isoformat(), "status": a.status, "note": a.note or ""} for a, name in rows]
+
+@app.post("/attendance")
+def create_attendance(payload: AttendanceCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    employee = db.query(Employee).filter(Employee.id == payload.employee_id, Employee.user_id == user.id).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found.")
+    try:
+        work_date = date.fromisoformat(payload.work_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date must use YYYY-MM-DD.")
+    record = Attendance(employee_id=employee.id, user_id=user.id, work_date=work_date, status=payload.status, note=payload.note)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {"id": record.id, "message": "Attendance saved"}
+
+@app.get("/reports")
+def reports(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    employees = db.query(Employee).filter(Employee.user_id == user.id).all()
+    payroll = sum(float(e.salary or 0) for e in employees)
+    by_department = {}
+    for e in employees:
+        by_department[e.department] = by_department.get(e.department, 0) + float(e.salary or 0)
     return {
-        "message": "Employee deleted successfully"
+        "employee_count": len(employees),
+        "active_count": sum(e.status.lower() == "active" for e in employees),
+        "inactive_count": sum(e.status.lower() != "active" for e in employees),
+        "payroll": payroll,
+        "average_salary": round(payroll / len(employees), 2) if employees else 0,
+        "department_payroll": [{"department": k, "payroll": v} for k, v in sorted(by_department.items())],
+        "employees": [employee_dict(e) for e in employees],
     }
-
-
-# ==================================================
-# ABOUT
-# ==================================================
 
 @app.get("/about")
 def about():
-    return {
-        "project": "Employee Management System",
-        "built_with": "Python, FastAPI, SQLAlchemy and SQLite",
-        "features": [
-            "User registration and login",
-            "Password hashing",
-            "Session authentication",
-            "Employee management",
-            "Dashboard statistics",
-            "Search and filtering",
-            "User-specific employee records"
-        ]
-    }
+    return {"name": "Employee Management System", "version": "2.0.0"}
