@@ -1,782 +1,286 @@
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+const money = (value) => new Intl.NumberFormat("en-IN", {style:"currency", currency:"INR", maximumFractionDigits:0}).format(Number(value || 0));
+let employees = [];
+let currentUser = null;
+let reportsCache = null;
 
-/* =========================================
-   EMPLOYEE MANAGEMENT SYSTEM
-   FastAPI + SQLite + User Authentication
-========================================= */
-
-const API = "";
-const ENDPOINT = "/employees";
-const PER_PAGE = 6;
-
-/* ========= State ========= */
-
-let all = [];
-let page = 1;
-let editId = null;
-let delIds = [];
-let view = "list";
-let sel = new Set();
-let pageIds = [];
-
-const $ = s => document.querySelector(s);
-
-const fmt = n =>
-  "₹" + Number(n || 0).toLocaleString("en-IN");
-
-const esc = s =>
-  String(s ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[c]));
-
-/* ========= API connection ========= */
-
-async function request(path, options = {}) {
-  const response = await fetch(API + path, {
-    ...options,
+function toast(message, isError = false) {
+  const el = document.createElement("div");
+  el.className = `toast${isError ? " error" : ""}`;
+  el.textContent = message;
+  $("#toast-region").appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+async function api(url, options = {}) {
+  const response = await fetch(url, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
+    ...options,
+    headers: {"Content-Type":"application/json", ...(options.headers || {})}
   });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    let message = data.detail || data.message || response.statusText;
-
-    if (Array.isArray(message)) {
-      message = message.map(x => x.msg || JSON.stringify(x)).join(", ");
-    }
-
-    if (typeof message === "object") {
-      message = JSON.stringify(message);
-    }
-
-    throw new Error(message || "Something went wrong");
-  }
-
+  let data = {};
+  try { data = await response.json(); } catch {}
+  if (!response.ok) throw new Error(data.detail || data.message || `Request failed (${response.status})`);
   return data;
 }
-
-async function api(method, path = "", body) {
-  return request(ENDPOINT + path, {
-    method,
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
-}
-
-/* ========= Authentication ========= */
-
-function showAuth() {
+function showAuth(which = "login") {
   $("#auth-view").hidden = false;
   $("#app-view").hidden = true;
+  $("#login-form").hidden = which !== "login";
+  $("#register-form").hidden = which !== "register";
+  $("#show-login").classList.toggle("active", which === "login");
+  $("#show-register").classList.toggle("active", which === "register");
 }
-
-function showApp(user) {
+function showApp() {
   $("#auth-view").hidden = true;
   $("#app-view").hidden = false;
-
-  if ($("#current-user")) {
-    $("#current-user").textContent =
-      user.username || user.email || "User";
+}
+function switchPage(page) {
+  $$(".page-view").forEach(section => section.hidden = section.id !== `page-${page}`);
+  $$(".nav-link").forEach(button => button.classList.toggle("active", button.dataset.page === page));
+  const titles = {dashboard:"Overview",employees:"Employees",departments:"Departments",attendance:"Attendance",payroll:"Payroll",reports:"Reports"};
+  $("#page-heading").textContent = titles[page] || "Overview";
+  if (page === "employees") loadEmployees();
+  if (page === "departments") renderDepartments();
+  if (page === "attendance") {
+    loadEmployees().then(loadAttendance).catch(error => toast(error.message, true));
   }
-
-  load();
+  if (page === "payroll" || page === "reports") loadReports();
 }
-
-function showLoginPanel() {
-  $("#login-panel").hidden = false;
-  $("#register-panel").hidden = true;
-  $("#login-error").textContent = "";
-  $("#register-error").textContent = "";
+function initials(name) {
+  return (name || "U").trim().split(/\s+/).slice(0,2).map(s=>s[0]).join("").toUpperCase();
 }
-
-function showRegisterPanel() {
-  $("#login-panel").hidden = true;
-  $("#register-panel").hidden = false;
-  $("#login-error").textContent = "";
-  $("#register-error").textContent = "";
+function setUser(user) {
+  currentUser = user;
+  const name = user.username || user.email || "User";
+  $("#sidebar-username").textContent = name;
+  $("#user-avatar").textContent = initials(name);
+  $("#top-avatar").textContent = initials(name);
+  $("#welcome-name").textContent = name;
 }
-
-/* Check whether the user already has a valid login session */
-
 async function checkSession() {
   try {
-    const user = await request("/me");
-    showApp(user);
-  } catch (error) {
-    showAuth();
-    showLoginPanel();
+    const user = await api("/me");
+    setUser(user);
+    showApp();
+    await loadDashboard();
+  } catch {
+    showAuth("login");
   }
 }
-
-/* Login */
-
-$("#login-form").addEventListener("submit", async event => {
+async function loadDashboard() {
+  const data = await api("/dashboard/stats");
+  $("#stat-employees").textContent = data.total_employees;
+  $("#stat-departments").textContent = data.departments;
+  $("#stat-average").textContent = money(data.average_salary);
+  $("#stat-payroll").textContent = money(data.total_payroll);
+  const chart = $("#department-chart");
+  chart.innerHTML = "";
+  const max = Math.max(1, ...data.department_counts.map(d=>d.count));
+  data.department_counts.forEach(d => {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `<span>${escapeHTML(d.department)}</span><div class="bar-track"><div class="bar-fill" style="width:${d.count/max*100}%"></div></div><b>${d.count}</b>`;
+    chart.appendChild(row);
+  });
+  if (!data.department_counts.length) chart.innerHTML = '<div class="empty-state">No department data yet.</div>';
+  const recent = $("#recent-list");
+  recent.innerHTML = "";
+  data.recent_employees.forEach(e => {
+    const item = document.createElement("div");
+    item.className = "recent-item";
+    item.innerHTML = `<div class="recent-avatar">${initials(e.name)}</div><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.role)} · ${escapeHTML(e.department)}</small></div>`;
+    recent.appendChild(item);
+  });
+  if (!data.recent_employees.length) recent.innerHTML = '<div class="empty-state">Your recent employees will appear here.</div>';
+}
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+async function loadEmployees() {
+  const search = encodeURIComponent($("#employee-search").value.trim());
+  const dept = encodeURIComponent($("#department-filter").value);
+  const status = encodeURIComponent($("#status-filter").value);
+  employees = await api(`/employees?search=${search}&department=${dept}&status=${status}`);
+  renderEmployeeTable();
+  populateEmployeeSelects();
+  populateDepartmentFilter();
+}
+function renderEmployeeTable() {
+  const body = $("#employee-table-body");
+  body.innerHTML = "";
+  employees.forEach(e => {
+    const tr = document.createElement("tr");
+    const statusClass = e.status.toLowerCase().replace(/\s+/g,"-");
+    tr.innerHTML = `<td><div class="employee-cell"><div class="recent-avatar">${initials(e.name)}</div><div><strong>${escapeHTML(e.name)}</strong><small>${escapeHTML(e.email)}</small></div></div></td>
+      <td>${escapeHTML(e.role)}</td><td>${escapeHTML(e.department)}</td><td>${money(e.salary)}</td>
+      <td><span class="status-pill ${statusClass}">${escapeHTML(e.status)}</span></td>
+      <td><button class="row-action" data-edit="${e.id}">Edit</button><button class="row-action delete" data-delete="${e.id}">Delete</button></td>`;
+    body.appendChild(tr);
+  });
+  $("#employee-empty").hidden = employees.length > 0;
+  body.querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click",()=>openEmployeeDialog(Number(b.dataset.edit))));
+  body.querySelectorAll("[data-delete]").forEach(b=>b.addEventListener("click",()=>deleteEmployee(Number(b.dataset.delete))));
+}
+function populateDepartmentFilter() {
+  const select = $("#department-filter");
+  const current = select.value;
+  const departments = [...new Set(employees.map(e=>e.department))].sort();
+  select.innerHTML = '<option value="">All departments</option>' + departments.map(d=>`<option value="${escapeHTML(d)}">${escapeHTML(d)}</option>`).join("");
+  select.value = departments.includes(current) ? current : "";
+}
+function populateEmployeeSelects() {
+  const select = $("#attendance-employee");
+  const current = select.value;
+  select.innerHTML = '<option value="">Select employee</option>' + employees.map(e=>`<option value="${e.id}">${escapeHTML(e.name)}</option>`).join("");
+  select.value = current;
+}
+function openEmployeeDialog(id = null) {
+  const employee = employees.find(e=>e.id===id);
+  $("#employee-form").reset();
+  $("#employee-id").value = employee?.id || "";
+  $("#employee-dialog-title").textContent = employee ? "Edit employee" : "Add employee";
+  $("#employee-name").value = employee?.name || "";
+  $("#employee-email").value = employee?.email || "";
+  $("#employee-role").value = employee?.role || "";
+  $("#employee-department").value = employee?.department || "";
+  $("#employee-salary").value = employee?.salary || 0;
+  $("#employee-status").value = employee?.status || "Active";
+  $("#employee-dialog").showModal();
+}
+async function saveEmployee(event) {
   event.preventDefault();
-
-  const email = $("#login-email").value.trim();
-  const password = $("#login-password").value;
-
-  const errorBox = $("#login-error");
-  const submitButton = event.submitter;
-
-  errorBox.textContent = "";
-
-  if (!email || !password) {
-    errorBox.textContent = "Enter your email and password.";
-    return;
-  }
-
-  if (submitButton) submitButton.disabled = true;
-
-  try {
-    await request("/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password })
-    });
-
-    const user = await request("/me");
-
-    $("#login-form").reset();
-    showApp(user);
-
-    toast("Login successful");
-  } catch (error) {
-    errorBox.textContent = error.message || "Login failed";
-  } finally {
-    if (submitButton) submitButton.disabled = false;
-  }
-});
-
-/* Registration */
-
-$("#register-form").addEventListener("submit", async event => {
-  event.preventDefault();
-
-  const username = $("#register-username").value.trim();
-  const email = $("#register-email").value.trim();
-  const password = $("#register-password").value;
-
-  const errorBox = $("#register-error");
-  const submitButton = event.submitter;
-
-  errorBox.textContent = "";
-
-  if (username.length < 3) {
-    errorBox.textContent = "Username must contain at least 3 characters.";
-    return;
-  }
-
-  if (password.length < 8) {
-    errorBox.textContent = "Password must contain at least 8 characters.";
-    return;
-  }
-
-  if (submitButton) submitButton.disabled = true;
-
-  try {
-    await request("/register", {
-      method: "POST",
-      body: JSON.stringify({
-        username,
-        email,
-        password
-      })
-    });
-
-    // Automatically log in after successful registration.
-    await request("/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password })
-    });
-
-    const user = await request("/me");
-
-    $("#register-form").reset();
-    showApp(user);
-
-    toast("Account created successfully");
-  } catch (error) {
-    errorBox.textContent = error.message || "Registration failed";
-  } finally {
-    if (submitButton) submitButton.disabled = false;
-  }
-});
-
-/* Switch between login and registration */
-
-$("#show-register").onclick = showRegisterPanel;
-$("#show-login").onclick = showLoginPanel;
-
-/* Password visibility buttons */
-
-document.querySelectorAll("[data-target]").forEach(button => {
-  button.addEventListener("click", () => {
-    const input = $("#" + button.dataset.target);
-
-    if (!input) return;
-
-    input.type = input.type === "password" ? "text" : "password";
-    button.textContent = input.type === "password" ? "Show" : "Hide";
-  });
-});
-
-/* Logout */
-
-$("#logout").onclick = async () => {
-  try {
-    await request("/logout", {
-      method: "POST"
-    });
-
-    all = [];
-    sel.clear();
-
-    $("#login-form").reset();
-    showAuth();
-    showLoginPanel();
-
-    toast("Logged out successfully");
-  } catch (error) {
-    toast(error.message || "Logout failed", true);
-  }
-};
-
-/* ========= Rendering ========= */
-
-function filtered() {
-  const q = $("#q").value.trim().toLowerCase();
-  const d = $("#dept").value;
-  const s = $("#sort").value;
-  const status = $("#sfilter").value;
-
-  let rows = all.filter(e =>
-    (d === "All" || e.department === d) &&
-    (status === "All" || (e.status || "Active") === status) &&
-    (!q || [
-      e.name,
-      e.email,
-      e.position || e.role,
-      e.department
-    ].some(v => String(v || "").toLowerCase().includes(q)))
-  );
-
-  const by = {
-    "name": (a, b) => a.name.localeCompare(b.name),
-    "salary-desc": (a, b) => b.salary - a.salary,
-    "salary-asc": (a, b) => a.salary - b.salary,
-    "newest": (a, b) => b.id - a.id
-  }[s];
-
-  return rows.sort(by || (() => 0));
-}
-
-function renderStats() {
-  const depts = new Set(all.map(e => e.department));
-  const total = all.reduce((sum, e) => sum + Number(e.salary || 0), 0);
-
-  const items = [
-    ["👥", all.length, "Employees"],
-    ["🏢", depts.size, "Departments"],
-    ["📈", fmt(all.length ? Math.round(total / all.length) : 0), "Average salary"],
-    ["💰", fmt(total), "Total payroll"]
-  ];
-
-  $("#stats").innerHTML = items.map(i =>
-    `<div class="raised stat">
-      <div class="ico">${i[0]}</div>
-      <div><b>${i[1]}</b><span>${i[2]}</span></div>
-    </div>`
-  ).join("");
-}
-
-function renderDepts() {
-  const current = $("#dept").value || "All";
-
-  const departments = [
-    "All",
-    ...[...new Set(all.map(e => e.department))].sort()
-  ];
-
-  $("#dept").innerHTML = departments.map(d =>
-    `<option value="${esc(d)}">
-      ${d === "All" ? "All departments" : esc(d)}
-    </option>`
-  ).join("");
-
-  $("#dept").value = departments.includes(current) ? current : "All";
-}
-
-const stCls = x =>
-  x === "On leave" ? "leave" :
-  x === "Resigned" ? "out" : "";
-
-const st = e =>
-  `<span class="tag">
-    <i class="dot ${stCls(e.status)}"></i>
-    ${esc(e.status || "Active")}
-  </span>`;
-
-const ini = n =>
-  esc(String(n || "").split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase());
-
-const chk = e =>
-  `<input type="checkbox" class="chk"
-    data-sel="${e.id}"
-    aria-label="Select ${esc(e.name)}"
-    ${sel.has(String(e.id)) ? "checked" : ""}>`;
-
-const acts = e =>
-  `<div class="ops">
-    <button class="btn sm" data-edit="${e.id}">Edit</button>
-    <button class="btn sm danger" data-del="${e.id}">Delete</button>
-  </div>`;
-
-function renderBars() {
-  const counts = {};
-
-  all.forEach(e => {
-    counts[e.department] = (counts[e.department] || 0) + 1;
-  });
-
-  const max = Math.max(1, ...Object.values(counts));
-
-  $("#bars").innerHTML = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(([department, count]) =>
-      `<div class="bar">
-        <span>${esc(department)}</span>
-        <div class="track">
-          <div class="fill" style="width:${count / max * 100}%"></div>
-        </div>
-        <b>${count}</b>
-      </div>`
-    ).join("");
-}
-
-function render() {
-  const rows = filtered();
-  const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
-
-  page = Math.min(page, pages);
-
-  const slice = rows.slice(
-    (page - 1) * PER_PAGE,
-    page * PER_PAGE
-  );
-
-  pageIds = slice.map(e => String(e.id));
-
-  let html;
-
-  if (!slice.length) {
-    html = `
-      <div class="empty">
-        <b>No employees found</b>
-        Try a different search or add a new employee.
-      </div>`;
-  } else if (view === "grid") {
-    html = `<div class="gridv">` +
-      slice.map(e => `
-        <div class="raised gcard">
-          ${chk(e)}
-          <div class="av">${ini(e.name)}</div>
-          <div>
-            <strong>${esc(e.name)}</strong><br>
-            <small class="sub">${esc(e.position || e.role)}</small>
-          </div>
-          <div>
-            <span class="tag">${esc(e.department)}</span>
-            ${st(e)}
-          </div>
-          <strong>${fmt(e.salary)}</strong>
-          ${acts(e)}
-        </div>`
-      ).join("") + `</div>`;
-  } else {
-    html = `
-      <div class="row head">
-        <input type="checkbox" class="chk" id="all"
-          aria-label="Select all on this page"
-          ${pageIds.length > 0 && pageIds.every(i => sel.has(i)) ? "checked" : ""}>
-        <span>Employee</span>
-        <span>Job title</span>
-        <span>Department and status</span>
-        <span>Salary</span>
-        <span></span>
-      </div>` +
-      slice.map(e => `
-        <div class="row">
-          ${chk(e)}
-          <div class="person">
-            <div class="av">${ini(e.name)}</div>
-            <div>
-              <strong>${esc(e.name)}</strong>
-              <small>${esc(e.email)}</small>
-            </div>
-          </div>
-          <span>${esc(e.position || e.role)}</span>
-          <span>
-            <span class="tag">${esc(e.department)}</span>
-            ${st(e)}
-          </span>
-          <strong>${fmt(e.salary)}</strong>
-          ${acts(e)}
-        </div>`
-      ).join("");
-  }
-
-  $("#list").className = view === "grid" ? "" : "raised list";
-  $("#list").innerHTML = html;
-
-  $("#pager").innerHTML = rows.length ? `
-    <span>
-      Showing ${(page - 1) * PER_PAGE + 1}–${Math.min(page * PER_PAGE, rows.length)}
-      of ${rows.length}
-    </span>
-    <div class="grp">
-      <button class="btn sm" id="prev" ${page <= 1 ? "disabled" : ""}>Previous</button>
-      <span>Page ${page} of ${pages}</span>
-      <button class="btn sm" id="next" ${page >= pages ? "disabled" : ""}>Next</button>
-    </div>` : "";
-
-  $("#bulk").classList.toggle("on", sel.size > 0);
-  $("#bn").textContent = sel.size + " selected";
-
-  renderStats();
-  renderBars();
-}
-
-/* ========= Notifications ========= */
-
-function toast(message, bad = false) {
-  const t = document.createElement("div");
-
-  t.className = "toast" + (bad ? " bad" : "");
-  t.textContent = message;
-
-  $("#toasts").append(t);
-
-  setTimeout(() => t.remove(), 3200);
-}
-
-/* ========= Load employee data ========= */
-
-async function load() {
-  $("#list").innerHTML = '<div class="skel"></div>'.repeat(4);
-
-  try {
-    all = await api("GET");
-
-    // Remove selections for records no longer available.
-    const validIds = new Set(all.map(e => String(e.id)));
-    sel = new Set([...sel].filter(id => validIds.has(id)));
-
-    $("#mode").textContent = `${all.length} employees in total`;
-
-    renderDepts();
-    render();
-  } catch (error) {
-    $("#list").innerHTML = `
-      <div class="empty">
-        <b>Couldn't load employees</b>
-        ${esc(error.message)}
-      </div>`;
-  }
-}
-
-/* ========= Add / Edit employee ========= */
-
-function openForm(employee) {
-  editId = employee ? employee.id : null;
-
-  $("#ft").textContent = employee ? "Edit employee" : "Add employee";
-
-  for (const key of [
-    "name", "email", "department",
-    "salary", "position", "status"
-  ]) {
-    const value = employee
-      ? (employee[key] ?? (key === "status" ? "Active" : ""))
-      : (
-          key === "department" ? "Engineering" :
-          key === "status" ? "Active" : ""
-        );
-
-    $("#" + key).value = value;
-  }
-
-  document.querySelectorAll(".err").forEach(x => {
-    x.textContent = "";
-  });
-
-  $("#form").showModal();
-  $("#name").focus();
-}
-
-function validate() {
-  let valid = true;
-
-  const rules = {
-    name: v => v.length >= 2 || "Enter the employee's full name.",
-    email: v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) || "Enter a valid email address.",
-    salary: v => (v !== "" && Number.isFinite(+v) && +v >= 0) || "Enter a salary of 0 or more.",
-    position: v => v.length >= 2 || "Enter a job title."
+  const id = $("#employee-id").value;
+  const payload = {
+    name:$("#employee-name").value.trim(), email:$("#employee-email").value.trim(),
+    role:$("#employee-role").value.trim(), department:$("#employee-department").value.trim(),
+    salary:Number($("#employee-salary").value || 0), status:$("#employee-status").value
   };
-
-  for (const [key, fn] of Object.entries(rules)) {
-    const result = fn($("#" + key).value.trim());
-    const error = $("#" + key).parentElement.querySelector(".err");
-
-    if (error) {
-      error.textContent = result === true ? "" : result;
-    }
-
-    if (result !== true) valid = false;
-  }
-
-  return valid;
+  try {
+    await api(id ? `/employees/${id}` : "/employees", {method:id?"PUT":"POST", body:JSON.stringify(payload)});
+    $("#employee-dialog").close();
+    toast(id ? "Employee updated." : "Employee added.");
+    await loadEmployees(); await loadDashboard();
+  } catch (error) { toast(error.message, true); }
 }
-
-/* Save employee */
-
-$("#f").addEventListener("submit", async event => {
+async function deleteEmployee(id) {
+  const employee = employees.find(e=>e.id===id);
+  if (!employee || !confirm(`Delete ${employee.name}? This cannot be undone.`)) return;
+  try {
+    await api(`/employees/${id}`, {method:"DELETE"});
+    toast("Employee deleted.");
+    await loadEmployees(); await loadDashboard();
+  } catch(error) { toast(error.message,true); }
+}
+async function renderDepartments() {
+  const data = await api("/departments");
+  $("#department-cards").innerHTML = data.length ? data.map(d=>`<article class="department-card"><div class="dept-symbol">▥</div><h3>${escapeHTML(d.name)}</h3><p>${d.count} employee${d.count===1?"":"s"}</p></article>`).join("") : '<div class="empty-state">Departments will appear when you add employees.</div>';
+}
+async function loadAttendance() {
+  const rows = await api("/attendance");
+  $("#attendance-body").innerHTML = rows.map(r=>`<tr><td>${escapeHTML(r.employee)}</td><td>${r.date}</td><td><span class="status-pill">${escapeHTML(r.status)}</span></td><td>${escapeHTML(r.note)}</td></tr>`).join("");
+}
+async function saveAttendance(event) {
   event.preventDefault();
-
-  if (!validate()) return;
-
-  const body = {
-    name: $("#name").value.trim(),
-    email: $("#email").value.trim(),
-    department: $("#department").value,
-    position: $("#position").value.trim(),
-    role: $("#position").value.trim(),
-    status: $("#status").value,
-    salary: Number($("#salary").value)
-  };
-
-  $("#save").disabled = true;
-
   try {
-    if (editId !== null) {
-      await api("PUT", "/" + editId, body);
-      toast("Employee updated successfully");
-    } else {
-      await api("POST", "", body);
-      toast("Employee added successfully");
-    }
-
-    $("#form").close();
-    await load();
-  } catch (error) {
-    toast(error.message || "Couldn't save employee", true);
-  } finally {
-    $("#save").disabled = false;
-  }
-});
-
-/* ========= Edit and delete actions ========= */
-
-$("#list").addEventListener("click", event => {
-  const editButton = event.target.closest("[data-edit]");
-  const deleteButton = event.target.closest("[data-del]");
-
-  if (editButton) {
-    const employee = all.find(x => x.id == editButton.dataset.edit);
-    if (employee) openForm(employee);
-  }
-
-  if (deleteButton) {
-    askDel([deleteButton.dataset.del]);
-  }
-});
-
-function askDel(ids) {
-  delIds = ids.map(String);
-
-  const employee = all.find(x => x.id == ids[0]);
-
-  $("#cname").textContent =
-    ids.length > 1
-      ? ids.length + " employees"
-      : employee?.name || "this employee";
-
-  $("#confirm").showModal();
+    await api("/attendance",{method:"POST",body:JSON.stringify({
+      employee_id:Number($("#attendance-employee").value), work_date:$("#attendance-date").value,
+      status:$("#attendance-status").value,note:$("#attendance-note").value.trim()
+    })});
+    $("#attendance-note").value="";
+    toast("Attendance saved.");
+    await loadAttendance();
+  } catch(error) { toast(error.message,true); }
 }
-
-$("#list").addEventListener("change", event => {
-  if (event.target.id === "all") {
-    pageIds.forEach(id =>
-      event.target.checked ? sel.add(id) : sel.delete(id)
-    );
-  } else if (event.target.dataset.sel) {
-    event.target.checked
-      ? sel.add(event.target.dataset.sel)
-      : sel.delete(event.target.dataset.sel);
-  }
-
-  render();
-});
-
-/* Bulk actions */
-
-$("#bdel").onclick = () => askDel([...sel]);
-
-$("#bclr").onclick = () => {
-  sel.clear();
-  render();
-};
-
-$("#yes").onclick = async () => {
-  try {
-    for (const id of delIds) {
-      await api("DELETE", "/" + id);
-    }
-
-    sel.clear();
-
-    toast(delIds.length > 1
-      ? "Employees deleted successfully"
-      : "Employee deleted successfully"
-    );
-
-    await load();
-  } catch (error) {
-    toast(error.message || "Couldn't delete employee", true);
-  }
-
-  $("#confirm").close();
-};
-
-$("#no").onclick = () => $("#confirm").close();
-$("#cancel").onclick = () => $("#form").close();
-$("#add").onclick = () => openForm();
-
-/* ========= View switching ========= */
-
-const setView = v => {
-  view = v;
-
-  $("#vl").setAttribute("aria-pressed", v === "list");
-  $("#vg").setAttribute("aria-pressed", v === "grid");
-
-  render();
-};
-
-$("#vl").onclick = () => setView("list");
-$("#vg").onclick = () => setView("grid");
-
-/* ========= Pagination ========= */
-
-$("#pager").addEventListener("click", event => {
-  if (event.target.id === "prev") page--;
-  if (event.target.id === "next") page++;
-
-  render();
-});
-
-/* ========= Search and filters ========= */
-
-let tm;
-
-$("#q").addEventListener("input", () => {
-  clearTimeout(tm);
-
-  tm = setTimeout(() => {
-    page = 1;
-    render();
-  }, 180);
-});
-
-$("#dept").onchange =
-$("#sort").onchange =
-$("#sfilter").onchange = () => {
-  page = 1;
-  render();
-};
-
-/* ========= Export CSV ========= */
-
-$("#export").onclick = () => {
-  const rows = filtered();
-
-  const headers = [
-    "id", "name", "email",
-    "department", "position",
-    "salary", "status"
-  ];
-
-  const csv = [
-    headers.join(","),
-    ...rows.map(row =>
-      headers.map(key =>
-        `"${String(row[key] ?? "").replace(/"/g, '""')}"`
-      ).join(",")
-    )
-  ].join("\n");
-
-  const blob = new Blob([csv], {
-    type: "text/csv;charset=utf-8;"
-  });
-
+async function loadReports() {
+  reportsCache = await api("/reports");
+  const r = reportsCache;
+  $("#payroll-total").textContent = money(r.payroll);
+  $("#payroll-average").textContent = money(r.average_salary);
+  $("#payroll-count").textContent = r.employee_count;
+  $("#payroll-body").innerHTML = r.employees.map(e=>`<tr><td>${escapeHTML(e.name)}</td><td>${escapeHTML(e.department)}</td><td>${money(e.salary)}</td></tr>`).join("");
+  $("#report-active").textContent = r.active_count;
+  $("#report-inactive").textContent = r.inactive_count;
+  $("#report-annual").textContent = money(r.payroll*12);
+  const max = Math.max(1,...r.department_payroll.map(d=>d.payroll));
+  $("#report-departments").innerHTML = r.department_payroll.map(d=>`<div class="bar-row"><span>${escapeHTML(d.department)}</span><div class="bar-track"><div class="bar-fill" style="width:${d.payroll/max*100}%"></div></div><b>${money(d.payroll)}</b></div>`).join("") || '<div class="empty-state">No report data yet.</div>';
+}
+function downloadCSV(filename, rows) {
+  const csv = rows.map(row=>row.map(value=>`"${String(value ?? "").replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const blob = new Blob([csv],{type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = "employees.csv";
-  link.click();
-
+  const a = document.createElement("a"); a.href=url; a.download=filename; a.click();
   URL.revokeObjectURL(url);
-};
-
-/* ========= Theme ========= */
-
-const root = document.documentElement;
-
-const setTheme = theme => {
-  root.dataset.theme = theme;
-  $("#theme").textContent = theme === "dark" ? "☀️" : "🌙";
-};
-
-setTheme(
-  matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light"
-);
-
-$("#theme").onclick = () => {
-  setTheme(root.dataset.theme === "dark" ? "light" : "dark");
-};
-
-/* ========= Keyboard shortcuts ========= */
-
-addEventListener("keydown", event => {
-  if (
-    event.metaKey ||
-    event.ctrlKey ||
-    event.altKey ||
-    /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) ||
-    document.querySelector("dialog[open]") ||
-    $("#app-view").hidden
-  ) return;
-
-  if (event.key === "/") {
-    event.preventDefault();
-    $("#q").focus();
-  }
-
-  if (event.key.toLowerCase() === "n") {
-    event.preventDefault();
-    openForm();
-  }
-});
-
-/* ========= Start application ========= */
-
-checkSession();
+}
+function exportPayroll() {
+  const rows = [["Employee","Email","Department","Role","Monthly salary","Status"],...employees.map(e=>[e.name,e.email,e.department,e.role,e.salary,e.status])];
+  downloadCSV("employee-payroll.csv",rows);
+}
+function exportReport() {
+  const r = reportsCache;
+  if (!r) return;
+  downloadCSV("employee-report.csv",[["Employee","Email","Department","Role","Salary","Status"],...r.employees.map(e=>[e.name,e.email,e.department,e.role,e.salary,e.status])]);
+}
+async function login(event) {
+  event.preventDefault();
+  const button = $("#login-form button[type=submit]");
+  button.disabled = true; $("#login-error").textContent="";
+  try {
+    await api("/login",{method:"POST",body:JSON.stringify({email:$("#login-email").value.trim(),password:$("#login-password").value})});
+    const user = await api("/me");
+    setUser(user); showApp(); toast("Welcome back!");
+    await loadDashboard();
+  } catch(error) { $("#login-error").textContent=error.message; }
+  finally { button.disabled=false; }
+}
+async function register(event) {
+  event.preventDefault();
+  const button = $("#register-form button[type=submit]");
+  button.disabled = true; $("#register-error").textContent="";
+  try {
+    const payload = {username:$("#register-username").value.trim(),email:$("#register-email").value.trim(),password:$("#register-password").value};
+    const result = await api("/register",{method:"POST",body:JSON.stringify(payload)});
+    $("#register-form").reset();
+    $("#login-email").value = payload.email;
+    showAuth("login");
+    $("#login-error").textContent = result.message || "Account created. Please log in.";
+    toast("Account created. Please log in.");
+  } catch(error) { $("#register-error").textContent=error.message; }
+  finally { button.disabled=false; }
+}
+async function logout() {
+  try { await api("/logout",{method:"POST"}); } catch {}
+  currentUser=null; employees=[]; $("#login-form").reset(); showAuth("login"); toast("You have signed out.");
+}
+function init() {
+  $("#today-label").textContent = new Date().toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short",year:"numeric"});
+  $("#attendance-date").value = new Date().toISOString().slice(0,10);
+  $("#login-form").addEventListener("submit",login);
+  $("#register-form").addEventListener("submit",register);
+  $("#show-login").addEventListener("click",()=>showAuth("login"));
+  $("#show-register").addEventListener("click",()=>showAuth("register"));
+  $("#login-to-register").addEventListener("click",()=>showAuth("register"));
+  $("#register-to-login").addEventListener("click",()=>showAuth("login"));
+  $$(".password-toggle").forEach(button=>button.addEventListener("click",()=>{
+    const input=document.getElementById(button.dataset.target);
+    input.type=input.type==="password"?"text":"password";
+    button.textContent=input.type==="password"?"Show":"Hide";
+  }));
+  $$(".nav-link").forEach(button=>button.addEventListener("click",()=>switchPage(button.dataset.page)));
+  $$("[data-goto]").forEach(button=>button.addEventListener("click",()=>switchPage(button.dataset.goto)));
+  $$("[data-open-employee]").forEach(button=>button.addEventListener("click",()=>openEmployeeDialog()));
+  $("#employee-form").addEventListener("submit",saveEmployee);
+  $("#close-employee-dialog").addEventListener("click",()=>$("#employee-dialog").close());
+  $("#cancel-employee").addEventListener("click",()=>$("#employee-dialog").close());
+  $("#employee-search").addEventListener("input",()=>loadEmployees().catch(e=>toast(e.message,true)));
+  $("#department-filter").addEventListener("change",()=>loadEmployees().catch(e=>toast(e.message,true)));
+  $("#status-filter").addEventListener("change",()=>loadEmployees().catch(e=>toast(e.message,true)));
+  $("#attendance-form").addEventListener("submit",saveAttendance);
+  $("#logout-button").addEventListener("click",logout);
+  $("#theme-toggle").addEventListener("click",()=>document.body.classList.toggle("dark"));
+  $("#payroll-export").addEventListener("click",exportPayroll);
+  $("#report-export").addEventListener("click",exportReport);
+  showAuth("login");
+  checkSession().catch(()=>showAuth("login"));
+}
+document.addEventListener("DOMContentLoaded",init);
